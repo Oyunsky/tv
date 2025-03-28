@@ -1,250 +1,473 @@
-# TODO: Add more colors for state and attributes
-
 import curses
-from enum import Enum, auto
+from abc import ABC, abstractmethod
 
 
-class WAttribute(Enum):
-    FOCUSABLE = auto()
-    CLICKABLE = auto()
+class LeftPanel:
+    DEFAULT_COLS = 26
+
+    def __init__(self, stdscr):
+        self._stdscr = stdscr
+
+        self.items = [
+            ("Профиль", None),
+            ("Все обсуждения", 0),
+            ("Мои темы", 1),
+            ("Прочитанные темы", 2),
+            ("Закладки", 3),
+            ("Отложенные темы", 4),
+            ("Основная категория", None),
+            ("Халява", 5),
+            ("Торговля", 6),
+            ("Работа и услуги", 7),
+            ("Арбитраж", 8),
+        ]
+        self.selected_item = 1
+
+        self.subscr = stdscr.subwin(0, 0, 0, 0)
+        self.subscr_cols = self.DEFAULT_COLS
+
+    def render(self):
+        if self.subscr_cols > root_scr_x:
+            self.subscr_cols = root_scr_x
+        elif self.subscr_cols < root_scr_x and self.subscr_cols < self.DEFAULT_COLS:
+            self.subscr_cols = min(self.DEFAULT_COLS, root_scr_x)
+
+        self.subscr.resize(root_scr_y, self.subscr_cols)
+        self.subscr.box()
+
+        y, x = 1, 3
+
+        for i, (item_name, item_id) in enumerate(self.items):
+            color = 1 if i == self.selected_item else 0
+            if item_id is None:
+                if i > 0:
+                    y += 1
+                self.subscr.addstr(y, x, f"[{item_name}]", curses.color_pair(color))
+                y += 1
+            else:
+                text = item_name.ljust(18)
+                self.subscr.addstr(y, x, f"- {text}", curses.color_pair(color))
+                y += 1
+
+    def render_and_refresh(self):
+        self.render()
+        self.subscr.refresh()
+
+    def resize(self):
+        self.subscr.erase()
+        self.render_and_refresh()
+
+    def event(self, key):
+        if key == ord('k'):
+            while True:
+                self.selected_item = (self.selected_item - 1) % len(self.items)
+                if self.items[self.selected_item][1] is not None:
+                    break
+            self.render_and_refresh()
+        elif key == ord('j'):
+            while True:
+                self.selected_item = (self.selected_item + 1) % len(self.items)
+                if self.items[self.selected_item][1] is not None:
+                    break
+            self.render_and_refresh()
+        elif key in (ord('\n'), ord(' ')):
+            return self.items[self.selected_item][1]
+        return None
 
 
-class WState(Enum):
-    FOCUSED   = auto()
-    UNFOCUSED = auto()
-    CLICKED   = auto()
+class RightPanel:
+    DEFAULT_X = 26
 
+    def __init__(self, stdscr):
+        self._stdscr = stdscr
 
-class WColor:
-    FOCUSED   = 1
-    CLICKED   = 2
-    CLICKABLE = 3
+        self.data = {
+            0: ["Все обсуждения: тема 1", "тема 2", "тема 3"],
+            1: ["Мои темы: пост 1", "пост 2"],
+            2: ["Прочитанные темы: запись 1", "запись 2"],
+            3: ["Закладки: сохранено 1", "сохранено 2"],
+            4: ["Отложенные темы: отложено 1"],
+            5: ["Халява: бесплатно 1", "бесплатно 2"],
+            6: ["Торговля: товар 1", "товар 2"],
+            7: ["Работа и услуги: вакансия 1"],
+            8: ["Арбитраж: спор 1", "спор 2"],
+        }
+        self.selected_data = None
 
+        self.subscr = stdscr.subwin(0, 0, 0, self.DEFAULT_X)
 
-KEY_Q = 113
-KEY_R = 114
-KEY_H = 104
-KEY_J = 106
-KEY_K = 107
-KEY_L = 108
-KEY_ENTER = 10
-KEY_SPACE = 32
-KEY_TAB = 9
+    def render(self):
+        self.subscr.resize(root_scr_y, max(1, root_scr_x - self.DEFAULT_X))
+        self.subscr.box()
+
+        if self.selected_data is not None and self.selected_data in self.data:
+            for i, item in enumerate(self.data[self.selected_data]):
+                try:
+                    self._stdscr.addstr(i + 1, self.DEFAULT_X + 3, str(item))
+                except curses.error:
+                    pass
+
+    def render_and_refresh(self):
+        self.render()
+        self.subscr.refresh()
+
+    def resize(self):
+        self.subscr.erase()
+        self.render_and_refresh()
+
+    def update_data(self, item_id):
+        self.selected_data = item_id
+        self.subscr.erase()
+        self.render_and_refresh()
 
 
 class V2:
-    __slots__ = ["y", "x"]
+    __slots__ = ("y", "x")
 
-    def __init__(self, y, x):
-        self.y = y
-        self.x = x
+    def __init__(self, y=0, x=0):
+        if isinstance(y, tuple):
+            self.y = y[0]
+            self.x = y[1]
+        else:
+            self.y = y
+            self.x = x
 
     def __repr__(self):
         return f"y={self.y} x={self.x}"
 
 
-class Widget:
-    __slots__ = ["scr", "_state", "attributes", "y", "x"]
+class BasePanel(ABC):
+    DEFAULT_Y = 0
+    DEFAULT_X = 0
+    DEFAULT_ROWS = 0
+    DEFAULT_COLS = 0
 
-    def __init__(self, scr, y, x, state=None, attributes=None):
-        self.scr = scr
-        self.y = y
-        self.x = x
-        self._state = state
-        self.attributes = attributes or set()
+    def __init__(self, parent):
+        self.parent = parent
 
-    def draw(self):
-        raise NotImplementedError
+        self.subwin = parent._stdscr.subwin(
+            self.DEFAULT_ROWS,
+            self.DEFAULT_COLS,
+            self.DEFAULT_Y,
+            self.DEFAULT_X
+        )
+        self.subwin.clear()
 
-    def handle_event(self, key):
-        pass
+    @abstractmethod
+    def render(self): ...
 
-    def has_attribute(self, attribute):
-        return attribute in self.attributes
+    def render_and_refresh(self):
+        self.render()
+        self.subwin.refresh()
 
-    def set_attribute(self, attribute):
-        self.attributes.add(attribute)
+    def clear_and_render(self):
+        self.subwin.erase()
+        self.render()
 
-    def remove_attribute(self, attribute):
-        self.attributes.discard(attribute)
+    def resize(self):
+        self.subwin.erase()
+        self.render_and_refresh()
 
-    @property
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, state):
-        self._state = state
-
-
-class DrawableWidget(Widget):
-    def draw(self):
-        raise NotImplementedError
-
-
-class Label(DrawableWidget):
-    def __init__(self, scr, y, x, text):
-        super().__init__(scr, y, x)
-        self.text = text
-
-    def draw(self):
-        color = curses.color_pair(WColor.FOCUSED) if self.state == WState.FOCUSED else curses.color_pair(0)
-        self.scr.addstr(self.y, self.x, self.text, color)
+    def addstr(self, y, x, text, *attrs):
+        try:
+            self.subwin.addstr(y, x, text, *attrs)
+        except:
+            pass
 
 
-class Button(DrawableWidget):
-    def __init__(self, scr, y, x, text):
-        super().__init__(scr, y, x)
-        self.text = text
-        self.set_attribute(WAttribute.FOCUSABLE)
-        self.set_attribute(WAttribute.CLICKABLE)
+class CategoryPanelA(BasePanel):
+    DEFAULT_COLS = 30
+    
+    def __init__(self, parent):
+        super().__init__(parent)
 
-    def draw(self):
-        color = curses.color_pair(WColor.CLICKABLE)
-        if self.state == WState.CLICKED:
-            color = curses.color_pair(WColor.CLICKED)
-        elif self.state == WState.FOCUSED:
-            color = curses.color_pair(WColor.FOCUSED)
-        self.scr.addstr(self.y, self.x, self.text, color)
+        self.items = [
+            ("Профиль", None),
+            ("Все обсуждения", 0),
+            ("Мои темы", 1),
+            ("Прочитанные темы", 2),
+            ("Закладки", 3),
+            ("Отложенные темы", 4),
+            ("Основная категория", None),
+            ("Халява", 5),
+            ("Торговля", 6),
+            ("Работа и услуги", 7),
+            ("Арбитраж", 8),
+            ("Тематическая категория", None),
+            ("Тематические вопросы", 9),
+            ("Спроси у ChatGPT", 10),
+            ("Статьи", 11),
+            ("Софт", 11),
+            ("Игровая категория", None),
+            ("PUBG", 12),
+            ("Counter-Strike 2", 12),
+            ("Dota 2", 12),
+            ("Overwatch 2", 12),
+            ("Fortnite", 12),
+            ("Valorant", 12),
+            ("GTA", 12),
+            ("World of Tanks", 12),
+            ("miHoYo", 12),
+            ("Deadlock", 12),
+            ("Остальные игры", 12),
+            ("Общая категория", None),
+            ("Оффтопик", 2),
+            ("Компьютеры", 2),
+            ("Телефоны", 2),
+            ("Веб-разработка", 2),
+            ("Программирование", 2),
+            ("Графика", 2),
+            ("Жизнь форума", 2),
+            ("Тестовый раздел", 2),
+        ]
+        self.selected_item = 1
+        self.scroll_offset = 0
 
-    def handle_event(self, key):
-        if key in (KEY_ENTER, KEY_SPACE):
-            self.state = WState.CLICKED
-            self.draw()
-            self.scr.refresh()
-            curses.napms(500)
-            self.state = WState.FOCUSED
+    def render(self):
+        if self.DEFAULT_COLS > self.parent._sx:
+            self.subscr_cols = self.parent._sx
+        elif self.DEFAULT_COLS < self.parent._sx:
+            self.DEFAULT_COLS = min(self.DEFAULT_COLS, self.parent._sx)
 
+        try:
+            self.subwin.resize(self.parent._sy, self.DEFAULT_COLS)
+        except:
+            pass
+        self.subwin.box()
 
-class VLayout(Widget):
-    __slots__ = ["spacing", "focused_index", "widgets"]
+        max_lines = self.parent._sy - 2
+        y, x = 1, 3
 
-    def __init__(self, scr, y, x, spacing=1):
-        super().__init__(scr, y, x)
+        if self.selected_item == 1 and self.scroll_offset == 1:
+            self.scroll_offset = 0
+            self.clear_and_render()
+        elif self.selected_item < self.scroll_offset:
+            self.scroll_offset = self.selected_item
+            self.clear_and_render()
+        elif self.selected_item >= self.scroll_offset + max_lines:
+            self.scroll_offset = self.selected_item - max_lines + 2
+            self.clear_and_render()
 
-        self.attributes = {WAttribute.FOCUSABLE}
+        for i in range(self.scroll_offset, min(self.scroll_offset + max_lines, len(self.items))):
+            item_name, item_id = self.items[i]
+            color = 1 if i == self.selected_item else 0
 
-        self.spacing = spacing
-        self.focused_index = -1
-        self.widgets = []
+            if item_id is None:
+                if i != 0:
+                    y += 1
 
-    def add_widget(self, widget):
-        new_y = self.y + len(self.widgets) * self.spacing
-        widget.y = new_y
-        widget.x = self.x
-        self.widgets.append(widget)
-
-        if self.focused_index == -1 and widget.has_attribute(WAttribute.FOCUSABLE):
-            self.focused_index = len(self.widgets) - 1
-
-    def draw(self):
-        for widget in self.widgets:
-            widget.draw()
-
-    def handle_event(self, key):
-        if self.focused_index == -1:
-            return
-
-        focused_widget = self.widgets[self.focused_index]
-        focused_widget.state = WState.UNFOCUSED
-
-        if key == KEY_J:
-            while True:
-                self.focused_index = (self.focused_index + 1) % len(self.widgets)
-                if self.widgets[self.focused_index].has_attribute(WAttribute.FOCUSABLE):
+                if y >= max_lines + 1:
                     break
-        elif key == KEY_K:
-            while True:
-                self.focused_index = (self.focused_index - 1) % len(self.widgets)
-                if self.widgets[self.focused_index].has_attribute(WAttribute.FOCUSABLE):
+
+                self.addstr(y, x, f"[{item_name}]", curses.color_pair(color))
+                y += 1
+            else:
+                self.addstr(y, x, f"- {item_name.ljust(18)}", curses.color_pair(color))
+                y += 1
+
+            if y >= max_lines + 1:
+                break
+
+    def event(self, key):
+        if key == ord('k'):
+            new_pos = self.selected_item - 1
+            while new_pos > 0:
+                if self.items[new_pos][1] is not None:
+                    self.selected_item = new_pos
                     break
-
-        self.widgets[self.focused_index].state = WState.FOCUSED
-        self.widgets[self.focused_index].handle_event(key)
-
-    @property
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, state):
-        self._state = state
-        if state == WState.FOCUSED and self.focused_index != -1:
-            self.widgets[self.focused_index].state = WState.FOCUSED
-        elif state == WState.UNFOCUSED:
-            for widget in self.widgets:
-                widget.state = WState.UNFOCUSED
+                new_pos -= 1
+            self.render_and_refresh()
+        elif key == ord('j'):
+            new_pos = self.selected_item + 1
+            while new_pos < len(self.items):
+                if self.items[new_pos][1] is not None:
+                    self.selected_item = new_pos
+                    break
+                new_pos += 1
+            self.render_and_refresh()
 
 
-class Renderer:
-    __slots__ = ["scr", "event_key", "focused_index", "widgets"]
+class CategoryPanel(BasePanel):
+    DEFAULT_COLS = 30
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.categories = [
+            ("Профиль", None),
+            ("Все обсуждения", 0),
+            ("Мои темы", 1),
+            ("Прочитанные темы", 2),
+            ("Закладки", 3),
+            ("Отложенные темы", 4),
+            ("Основная категория", None),
+            ("Халява", 5),
+            ("Торговля", 6),
+            ("Работа и услуги", 7),
+            ("Арбитраж", 8),
+            ("Тематическая категория", None),
+            ("Тематические вопросы", 9),
+            ("Спроси у ChatGPT", 10),
+            ("Статьи", 11),
+            ("Софт", 11),
+            ("Игровая категория", None),
+            ("PUBG", 12),
+            ("Counter-Strike 2", 12),
+            ("Dota 2", 12),
+            ("Overwatch 2", 12),
+            ("Fortnite", 12),
+            ("Valorant", 12),
+            ("GTA", 12),
+            ("World of Tanks", 12),
+            ("miHoYo", 12),
+            ("Deadlock", 12),
+            ("Остальные игры", 12),
+            ("Общая категория", None),
+            ("Оффтопик", 2),
+            ("Компьютеры", 2),
+            ("Телефоны", 2),
+            ("Веб-разработка", 2),
+            ("Программирование", 2),
+            ("Графика", 2),
+            ("Жизнь форума", 2),
+            ("Тестовый раздел", 2),
+        ]
+        self.selected_category = 1
+        self.scroll_offset = 0
+        self.cursor_pos = 0
+        
+    def render(self):
+        if self.DEFAULT_COLS > self.parent._sx:
+            self.DEFAULT_COLS = self.parent._sx
+        elif self.DEFAULT_COLS < self.parent._sx:
+            self.DEFAULT_COLS = min(self.DEFAULT_COLS, self.parent._sx)
 
-    def __init__(self, scr):
-        self.scr = scr
-        self.scr.timeout(0)
-        self.event_key = None
-        self.focused_index = -1
-        self.widgets = []
+        try:
+            self.subwin.resize(self.parent._sy, self.DEFAULT_COLS)
+        except:
+            pass
 
-    def add_widget(self, widget):
-        self.widgets.append(widget)
-        if self.focused_index == -1 and widget.has_attribute(WAttribute.FOCUSABLE):
-            self.focused_index = len(self.widgets) - 1
-            widget.state = WState.FOCUSED
+        center_y = self.parent._sy // 2
+        visible_lines = self.parent._sy - 2
+        half_visible = visible_lines // 2
 
-    def draw_widgets(self):
-        self.scr.erase()
-        for widget in self.widgets:
-            widget.draw()
-        self.scr.refresh()
+        if self.selected_category < self.scroll_offset + half_visible:
+            self.scroll_offset = max(0, self.selected_category - half_visible)
+            self.subwin.erase()
+        elif self.selected_category > self.scroll_offset + half_visible:
+            self.scroll_offset = min(max(0, len(self.categories) - visible_lines), self.selected_category - half_visible)
+            self.subwin.erase()
+
+        self.subwin.box()
+
+        y_start = 1
+        x = 3
+
+        for i in range(self.scroll_offset, min(self.scroll_offset + visible_lines, len(self.categories))):
+            rel_y = i - self.scroll_offset
+            y = y_start + rel_y
+            
+            category_name, category_id = self.categories[i]
+            color = 1 if i == self.selected_category else 0
+            
+            if category_id is None:
+                self.addstr(y, x, f"[{category_name}]", curses.color_pair(color))
+                y += 1
+            else:
+                self.addstr(y, x, f"- {category_name.ljust(self.DEFAULT_COLS - 8)}", curses.color_pair(color))
+
+    def event(self, key):
+        old_selection = self.selected_category
+        
+        if key == ord('k'):
+            new_pos = self.selected_category - 1
+            while new_pos >= 0:
+                if self.categories[new_pos][1] is not None:
+                    self.selected_category = new_pos
+                    break
+                new_pos -= 1
+        elif key == ord('j'):
+            new_pos = self.selected_category + 1
+            while new_pos < len(self.categories):
+                if self.categories[new_pos][1] is not None:
+                    self.selected_category = new_pos
+                    break
+                new_pos += 1
+        elif key in (ord('\n'), ord(' ')):
+            return self.categories[self.selected_category][1]
+        
+        if old_selection != self.selected_category:
+            return "update"
+        
+        return None
+
+class Application:
+    def __init__(self):
+        self.init_screen()
+        self.init_colors()
+        self.init_panels()
+
+        self._sy = self._sx = 0
+        self._old_sy = self._old_sx = 0
+
+        self.key = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def close(self):
+        self._stdscr.keypad(False)
+        curses.nocbreak()
+        curses.echo()
+        curses.endwin()
+
+    def init_screen(self):
+        self._stdscr = curses.initscr()
+        curses.noecho()
+
+    def init_colors(self):
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
+
+    def init_panels(self):
+        self.panels = [CategoryPanel(self)]
 
     def update(self):
-        self.event_key = self.scr.getch()
+        self._sy, self._sx = self._stdscr.getmaxyx()
 
-        if self.event_key == KEY_TAB:
-            self.widgets[self.focused_index].state = WState.UNFOCUSED
-            for _ in range(len(self.widgets)):
-                self.focused_index = (self.focused_index + 1) % len(self.widgets)
-                if self.widgets[self.focused_index].has_attribute(WAttribute.FOCUSABLE):
-                    self.widgets[self.focused_index].state = WState.FOCUSED
-                    break
+        for panel in self.panels:
+            if self.is_resized:
+                self._old_sy, self._old_sx = self._sy, self._sx
+                panel.resize()
 
-        if self.widgets:
-            self.widgets[self.focused_index].handle_event(self.event_key)
+            panel.render()
 
-        self.draw_widgets()
+            result = panel.event(self.key)
+            if result == "update":
+                panel.render_and_refresh()
+
+        self.key = self._stdscr.getch()
 
     def should_close(self):
-        return self.event_key == KEY_Q
+        return self.key == ord('q')
 
     @property
     def size(self):
-        return V2(*self.scr.getmaxyx())
+        return self._sy, self._sx
 
+    @property
+    def is_resized(self):
+        return self._old_sy != self._sy or self._old_sx != self._sx
 
-def main(scr):
-    curses.start_color()
-    curses.use_default_colors()
-
-    curses.init_pair(WColor.FOCUSED, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    curses.init_pair(WColor.CLICKED, curses.COLOR_BLACK, curses.COLOR_RED)
-    curses.init_pair(WColor.CLICKABLE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-
-    r = Renderer(scr)
-    r.add_widget(Label(scr, 0, 0, "[Widget Button]"))
-    r.add_widget(Button(scr, 1, 0, "Button 1"))
-
-    l = VLayout(scr, 5, 0)
-    l.add_widget(Label(scr, 0, 0, "[Widget VLayout]"))
-    l.add_widget(Button(scr, 0, 0, "SubButton 1"))
-    l.add_widget(Button(scr, 0, 0, "SubButton 2"))
-    l.add_widget(Button(scr, 0, 0, "SubButton 3"))
-
-    r.add_widget(l)
-
-    while not r.should_close():
-        r.update()
 
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    app = Application()
+    try:
+        while not app.should_close():
+            app.update()
+    finally:
+        app.close()
